@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>3D PBR Real-Time Studio Mobile Viewer & Exporter</title>
+    <!-- Tailwind CSS for UI styling -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Three.js Core and Loaders/Exporters via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+    
+    <!-- Three.js Exporters & Draco Encoder -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/DRACOExporter.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/OBJExporter.js"></script>
+
+    <!-- Three.js Postprocessing & Shaders for Unreal Bloom -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+
+    <style>
+        :root {
+            --sat: env(safe-area-inset-top);
+            --sab: env(safe-area-inset-bottom);
+            --sal: env(safe-area-inset-left);
+            --sar: env(safe-area-inset-right);
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            background-color: #090d16;
+            color: #f8fafc;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: none;
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.82);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        .glass-button {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            transition: all 0.15s ease;
+            min-height: 44px;
+            min-width: 44px;
+        }
+        .glass-button:active {
+            transform: scale(0.96);
+            background: rgba(255, 255, 255, 0.22);
+        }
+        input[type=range] {
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.12);
+            height: 8px;
+            border-radius: 4px;
+            outline: none;
+            touch-action: manipulation;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #3b82f6;
+            border: 2px solid #ffffff;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 2px; }
+        .pt-safe { padding-top: max(1rem, var(--sat)); }
+        .pb-safe { padding-bottom: max(1rem, var(--sab)); }
+        .bottom-safe { bottom: max(1rem, var(--sab)); }
+        .drawer-slide { transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+    </style>
+</head>
+<body class="w-screen h-screen relative m-0 p-0 overflow-hidden bg-slate-950">
+
+    <!-- 3D Canvas Viewport -->
+    <div id="viewport-container" class="w-full h-full absolute inset-0">
+        <canvas id="webgl-canvas" class="w-full h-full block"></canvas>
+    </div>
+
+    <!-- Top Navigation Overlay -->
+    <header class="absolute top-0 left-0 right-0 z-20 p-4 pt-safe flex justify-between items-center pointer-events-none">
+        <div class="glass-panel px-3.5 py-2 rounded-2xl flex items-center space-x-3 pointer-events-auto shadow-xl max-w-[60%] sm:max-w-xs">
+            <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-bold text-white text-xs shadow-md shrink-0">
+                PBR
+            </div>
+            <div class="truncate">
+                <h1 id="model-name" class="text-xs font-bold text-white tracking-wide truncate">Instant Studio Engine</h1>
+                <p id="model-info" class="text-[10px] text-slate-400 truncate">PBR Real-Time &bull; Bloom & LocalStorage</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2 pointer-events-auto">
+            <label title="Upload 3D Model (.glb, .gltf, .obj, .drc)" class="glass-button rounded-2xl text-blue-400 px-3 py-2 flex items-center space-x-1.5 text-xs font-semibold cursor-pointer">
+                <i class="fa-solid fa-cloud-arrow-up text-xs"></i>
+                <span class="hidden sm:inline">Upload</span>
+                <input type="file" id="top-model-input" accept=".glb,.gltf,.obj,.drc" class="hidden">
+            </label>
+            <button id="btn-perf-toggle" title="Performance Preset" class="glass-button rounded-2xl text-blue-400 px-3 py-2 flex items-center space-x-1.5 text-xs font-semibold">
+                <i class="fa-solid fa-bolt text-xs"></i>
+                <span id="perf-badge">HIGH</span>
+            </button>
+            <button id="btn-screenshot" title="Take Snapshot" class="glass-button rounded-2xl text-slate-200 hover:text-white px-3 py-2 flex items-center space-x-1.5 text-xs font-medium">
+                <i class="fa-solid fa-camera text-sm"></i>
+            </button>
+            <button id="btn-toggle-ui" title="Toggle Controls" class="glass-button rounded-2xl text-slate-200 hover:text-white px-3 py-2">
+                <i class="fa-solid fa-sliders text-base"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Floating Quick Action Bar -->
+    <div id="quick-toolbar" class="absolute bottom-safe left-1/2 transform -translate-x-1/2 z-20 flex items-center space-x-2 glass-panel p-2 rounded-2xl shadow-2xl transition-all duration-300">
+        <button id="btn-quick-gold" title="Gold Preset" class="w-9 h-9 rounded-xl bg-amber-500 border border-amber-300/40 active:scale-95 transition shadow"></button>
+        <button id="btn-quick-chrome" title="Chrome Preset" class="w-9 h-9 rounded-xl bg-slate-300 border border-white/50 active:scale-95 transition shadow"></button>
+        <button id="btn-quick-glass" title="Glass Preset" class="w-9 h-9 rounded-xl bg-blue-400/40 border border-blue-200/60 active:scale-95 transition shadow"></button>
+        <div class="w-px h-6 bg-slate-700/80 mx-0.5"></div>
+        <button id="btn-focus-mesh" title="Focus Mesh" class="glass-button rounded-xl text-slate-200 px-3 text-xs font-medium flex items-center gap-1.5">
+            <i class="fa-solid fa-expand text-xs"></i>
+            <span class="hidden sm:inline">Focus</span>
+        </button>
+        <button id="btn-open-drawer" class="glass-button rounded-xl text-blue-400 px-3 text-xs font-semibold flex items-center gap-1">
+            <i class="fa-solid fa-sliders"></i>
+            <span>Controls</span>
+        </button>
+    </div>
+
+    <!-- Mobile Drawer Controls Sheet -->
+    <div id="controls-drawer" class="drawer-slide fixed inset-x-0 bottom-0 z-30 max-h-[85vh] sm:max-h-[680px] sm:w-[450px] sm:left-auto sm:right-4 sm:bottom-4 glass-panel rounded-t-3xl sm:rounded-3xl flex flex-col shadow-2xl translate-y-full">
+        <div class="px-5 py-3 border-b border-slate-700/50 flex flex-col items-center relative">
+            <div class="w-12 h-1.5 bg-slate-600/80 rounded-full mb-3 sm:hidden"></div>
+            <div class="w-full flex justify-between items-center">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-cubes text-blue-400 text-sm"></i>
+                    <h2 class="text-xs font-bold uppercase tracking-wider text-slate-200">Engine & Material Controls</h2>
+                </div>
+                <button id="btn-close-drawer" class="w-8 h-8 rounded-full glass-button flex items-center justify-center text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-xmark text-sm"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="flex border-b border-slate-700/50 bg-slate-900/60 text-xs font-medium">
+            <button id="tab-btn-material" class="flex-1 py-3 text-center text-blue-400 border-b-2 border-blue-500 font-semibold focus:outline-none transition">Material</button>
+            <button id="tab-btn-env" class="flex-1 py-3 text-center text-slate-400 border-b-2 border-transparent focus:outline-none transition">Lighting</button>
+            <button id="tab-btn-mesh" class="flex-1 py-3 text-center text-slate-400 border-b-2 border-transparent focus:outline-none transition">Geometry</button>
+            <button id="tab-btn-export" class="flex-1 py-3 text-center text-slate-400 border-b-2 border-transparent focus:outline-none transition">Export</button>
+            <button id="tab-btn-engine" class="flex-1 py-3 text-center text-slate-400 border-b-2 border-transparent focus:outline-none transition">Engine</button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-5 space-y-6 text-xs pb-safe">
+            <!-- TAB 1: MATERIAL -->
+            <div id="tab-content-material" class="space-y-5">
+                <div>
+                    <label class="block font-semibold text-slate-300 mb-2">PBR Presets</label>
+                    <div class="grid grid-cols-4 gap-2">
+                        <button class="btn-preset bg-amber-600/25 active:bg-amber-600/50 border border-amber-500/40 p-2.5 rounded-xl text-center text-[11px] font-medium" data-preset="gold">Gold</button>
+                        <button class="btn-preset bg-slate-400/25 active:bg-slate-400/50 border border-slate-300/40 p-2.5 rounded-xl text-center text-[11px] font-medium" data-preset="chrome">Chrome</button>
+                        <button class="btn-preset bg-blue-600/25 active:bg-blue-600/50 border border-blue-400/40 p-2.5 rounded-xl text-center text-[11px] font-medium" data-preset="glass">Glass</button>
+                        <button class="btn-preset bg-red-600/25 active:bg-red-600/50 border border-red-400/40 p-2.5 rounded-xl text-center text-[11px] font-medium" data-preset="car-paint">Car Paint</button>
+                        <button class="btn-preset bg-emerald-600/25 active:bg-emerald-600/50 border border-emerald-400/40 p-2.5 rounded-xl text-center text-[11px] font-medium" data-preset="emerald">Plastic</button>
+                        <button class="btn-preset bg-stone-500/25 active:bg-stone-500/50 border border-stone-400/40 p-2.5 rounded-xl text-center text-[11px] font-medium" data-preset="ceramic">Ceramic</button>
+                        <button class="btn-preset bg-purple-600/25 active:bg-purple-600/50 border border-purple-400/40 p-2.5 rounded-xl text-center text-[11px] font-medium" data-preset="velvet">Sci-Fi</button>
+                        <button class="btn-preset bg-yellow-900/25 active:bg-yellow-900/50 border border-yellow-700/40 p-2.5 rounded-xl text-center text-[11px] font-medium" data-preset="leather">Copper</button>
+                    </div>
+                </div>
+
+                <div class="space-y-4 pt-3 border-t border-slate-700/40">
+                    <div class="flex justify-between items-center h-10">
+                        <label for="color-picker" class="font-medium text-slate-300">Base Albedo Color</label>
+                        <input type="color" id="color-picker" value="#ffffff" class="w-10 h-10 rounded-xl border-none cursor-pointer bg-transparent">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium">Roughness</label>
+                            <span id="val-roughness" class="text-slate-400 font-mono">0.20</span>
+                        </div>
+                        <input type="range" id="input-roughness" min="0" max="1" step="0.01" value="0.2" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium">Metalness</label>
+                            <span id="val-metalness" class="text-slate-400 font-mono">0.80</span>
+                        </div>
+                        <input type="range" id="input-metalness" min="0" max="1" step="0.01" value="0.8" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium">Transmission (Glass Effect)</label>
+                            <span id="val-transmission" class="text-slate-400 font-mono">0.00</span>
+                        </div>
+                        <input type="range" id="input-transmission" min="0" max="1" step="0.01" value="0.0" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium">Clearcoat Coating</label>
+                            <span id="val-clearcoat" class="text-slate-400 font-mono">0.00</span>
+                        </div>
+                        <input type="range" id="input-clearcoat" min="0" max="1" step="0.01" value="0.0" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium">Emission Strength</label>
+                            <span id="val-emission" class="text-slate-400 font-mono">0.00</span>
+                        </div>
+                        <input type="range" id="input-emission" min="0" max="2" step="0.05" value="0.0" class="w-full">
+                    </div>
+                    <div class="flex justify-between items-center pt-2">
+                        <label class="text-slate-300 font-medium">Wireframe Overlay</label>
+                        <input type="checkbox" id="input-wireframe" class="w-5 h-5 rounded bg-slate-800 border-slate-600 text-blue-500 focus:ring-0">
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: LIGHTING -->
+            <div id="tab-content-env" class="space-y-5 hidden">
+                <div>
+                    <label class="block font-semibold text-slate-300 mb-2">Lighting Environment Map</label>
+                    <select id="select-hdri" class="w-full bg-slate-800/90 border border-slate-700 text-slate-200 rounded-xl p-3 text-xs focus:outline-none focus:border-blue-500">
+                        <option value="studio">Studio Neutral (Procedural HDRI)</option>
+                        <option value="warm">Warm Studio Environment</option>
+                        <option value="cool">Cool Industrial Lighting</option>
+                    </select>
+                </div>
+                <div class="space-y-4 pt-2 border-t border-slate-700/40">
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium">Unreal Bloom Intensity</label>
+                            <span id="val-bloom" class="text-slate-400 font-mono">0.00</span>
+                        </div>
+                        <input type="range" id="input-bloom" min="0" max="3" step="0.05" value="0.0" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium">Env Exposure</label>
+                            <span id="val-exposure" class="text-slate-400 font-mono">1.00</span>
+                        </div>
+                        <input type="range" id="input-exposure" min="0.1" max="2.5" step="0.05" value="1.0" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium">Key Light Intensity</label>
+                            <span id="val-light-intensity" class="text-slate-400 font-mono">1.50</span>
+                        </div>
+                        <input type="range" id="input-light-intensity" min="0" max="4" step="0.1" value="1.5" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium">Light Direction Angle</label>
+                            <span id="val-light-rotation" class="text-slate-400 font-mono">45°</span>
+                        </div>
+                        <input type="range" id="input-light-rotation" min="0" max="360" step="1" value="45" class="w-full">
+                    </div>
+                </div>
+                <div class="space-y-3 pt-2 border-t border-slate-700/40">
+                    <label class="block font-semibold text-slate-300">Background Backdrop</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button id="bg-btn-hdri" class="py-2.5 rounded-xl border border-blue-500/50 bg-blue-500/20 text-slate-200 font-medium">HDRI Map</button>
+                        <button id="bg-btn-color" class="py-2.5 rounded-xl border border-slate-700 bg-slate-800/50 text-slate-400 font-medium">Solid Color</button>
+                    </div>
+                    <div id="bg-color-container" class="flex justify-between items-center hidden pt-1">
+                        <label class="text-slate-300">Background Color</label>
+                        <input type="color" id="bg-color-picker" value="#090d16" class="w-8 h-8 rounded-xl border-none cursor-pointer bg-transparent">
+                    </div>
+                    <div class="flex justify-between items-center pt-2">
+                        <label class="text-slate-300 font-medium">Floor Grid Helper</label>
+                        <input type="checkbox" id="input-grid" checked class="w-5 h-5 rounded bg-slate-800 border-slate-600 text-blue-500 focus:ring-0">
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: GEOMETRY -->
+            <div id="tab-content-mesh" class="space-y-5 hidden">
+                <div>
+                    <label class="block font-semibold text-slate-300 mb-2">Upload Custom 3D Model</label>
+                    <label class="w-full bg-blue-600/35 hover:bg-blue-600/50 border border-blue-500/50 p-3.5 rounded-2xl flex items-center justify-center space-x-2.5 cursor-pointer transition shadow-lg">
+                        <i class="fa-solid fa-cloud-arrow-up text-blue-400 text-base"></i>
+                        <span class="font-bold text-white text-xs">Choose .GLB, .GLTF, .OBJ, .DRC</span>
+                        <input type="file" id="custom-model-input" accept=".glb,.gltf,.obj,.drc" class="hidden">
+                    </label>
+                    <p class="text-[10px] text-slate-400 text-center mt-1.5">Tip: Drag & drop 3D models or Draco files directly into viewport.</p>
+                </div>
+                <div class="pt-3 border-t border-slate-700/40">
+                    <label class="block font-semibold text-slate-300 mb-2">Built-In Sample Geometry</label>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button class="btn-mesh bg-slate-800/80 hover:bg-slate-700 border border-slate-700 p-3 rounded-2xl text-center flex flex-col items-center gap-1.5" data-mesh="sphere">
+                            <i class="fa-solid fa-circle text-xl text-blue-400"></i>
+                            <span class="text-[11px] font-medium">Sphere</span>
+                        </button>
+                        <button class="btn-mesh bg-slate-800/80 hover:bg-slate-700 border border-slate-700 p-3 rounded-2xl text-center flex flex-col items-center gap-1.5" data-mesh="knot">
+                            <i class="fa-solid fa-dharmachakra text-xl text-purple-400"></i>
+                            <span class="text-[11px] font-medium">Torus Knot</span>
+                        </button>
+                        <button class="btn-mesh bg-slate-800/80 hover:bg-slate-700 border border-slate-700 p-3 rounded-2xl text-center flex flex-col items-center gap-1.5" data-mesh="drone">
+                            <i class="fa-solid fa-compact-disc text-xl text-emerald-400"></i>
+                            <span class="text-[11px] font-medium">Sci-Fi Core</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="pt-2 border-t border-slate-700/40 space-y-3">
+                    <div class="flex justify-between items-center">
+                        <label class="text-slate-300 font-medium">Auto Turn-Table Rotation</label>
+                        <input type="checkbox" id="input-autorotate" class="w-5 h-5 rounded bg-slate-800 border-slate-600 text-blue-500 focus:ring-0">
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: EXPORT -->
+            <div id="tab-content-export" class="space-y-5 hidden">
+                <div>
+                    <label class="block font-semibold text-slate-300 mb-1">Project Local Storage</label>
+                    <p class="text-[11px] text-slate-400 mb-3">Save or load your studio configuration, bloom, and material settings locally.</p>
+                    <div class="grid grid-cols-2 gap-2.5">
+                        <button id="btn-save-storage" class="bg-emerald-600/30 hover:bg-emerald-600/50 border border-emerald-500/50 p-3 rounded-xl flex items-center justify-center space-x-2 transition">
+                            <i class="fa-solid fa-floppy-disk text-emerald-400 text-sm"></i>
+                            <span class="font-bold text-white text-xs">Save Project</span>
+                        </button>
+                        <button id="btn-load-storage" class="bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/50 p-3 rounded-xl flex items-center justify-center space-x-2 transition">
+                            <i class="fa-solid fa-folder-open text-blue-400 text-sm"></i>
+                            <span class="font-bold text-white text-xs">Load Project</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="pt-3 border-t border-slate-700/40">
+                    <label class="block font-semibold text-slate-300 mb-1">Export Formats</label>
+                    <p class="text-[11px] text-slate-400 mb-3">Convert and download active 3D model with optional Draco compression.</p>
+                    <div class="bg-slate-800/60 p-3 rounded-xl mb-3 border border-slate-700/60">
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium text-[11px]">Draco Compression Level</label>
+                            <span id="val-draco-level" class="text-blue-400 font-mono font-bold text-[11px]">7</span>
+                        </div>
+                        <input type="range" id="input-draco-level" min="1" max="10" step="1" value="7" class="w-full">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2.5">
+                        <button id="btn-export-draco" class="bg-cyan-600/30 hover:bg-cyan-600/50 border border-cyan-500/50 p-3 rounded-xl flex items-center space-x-3 transition col-span-2">
+                            <i class="fa-solid fa-file-zipper text-cyan-400 text-xl"></i>
+                            <div class="text-left">
+                                <div class="font-bold text-white text-xs">Export .GLB (Draco Compressed)</div>
+                                <div class="text-[10px] text-cyan-200/70">Ultra Compact Mesh Storage</div>
+                            </div>
+                        </button>
+                        <button id="btn-export-glb" class="bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/50 p-3 rounded-xl flex items-center space-x-3 transition">
+                            <i class="fa-solid fa-cube text-blue-400 text-lg"></i>
+                            <div class="text-left">
+                                <div class="font-bold text-white text-xs">Export .GLB</div>
+                                <div class="text-[10px] text-slate-400">Binary Uncompressed</div>
+                            </div>
+                        </button>
+                        <button id="btn-export-gltf" class="bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 p-3 rounded-xl flex items-center space-x-3 transition">
+                            <i class="fa-solid fa-file-code text-indigo-400 text-lg"></i>
+                            <div class="text-left">
+                                <div class="font-bold text-white text-xs">Export .GLTF</div>
+                                <div class="text-[10px] text-slate-400">JSON + External Buffers</div>
+                            </div>
+                        </button>
+                        <button id="btn-export-obj" class="bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/50 p-3 rounded-xl flex items-center space-x-3 transition">
+                            <i class="fa-solid fa-shapes text-amber-400 text-lg"></i>
+                            <div class="text-left">
+                                <div class="font-bold text-white text-xs">Export .OBJ</div>
+                                <div class="text-[10px] text-slate-400">Wavefront Geometry</div>
+                            </div>
+                        </button>
+                        <button id="btn-export-json" class="bg-emerald-600/30 hover:bg-emerald-600/50 border border-emerald-500/50 p-3 rounded-xl flex items-center space-x-3 transition">
+                            <i class="fa-solid fa-brackets-curly text-emerald-400 text-lg"></i>
+                            <div class="text-left">
+                                <div class="font-bold text-white text-xs">Export .JSON</div>
+                                <div class="text-[10px] text-slate-400">Three.js Scene Object</div>
+                            </div>
+                        </button>
+                    </div>
+                    <div class="mt-2.5">
+                        <button id="btn-export-csv" class="w-full bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/50 p-3 rounded-xl flex items-center justify-center space-x-2 transition">
+                            <i class="fa-solid fa-table text-purple-400 text-sm"></i>
+                            <span class="font-bold text-white text-xs">Export Mesh Vertices to .CSV File</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 5: ENGINE -->
+            <div id="tab-content-engine" class="space-y-5 hidden">
+                <div>
+                    <label class="block font-semibold text-slate-300 mb-2">Performance Quality Profile</label>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button class="btn-perf-preset bg-slate-800 border border-slate-700 p-3 rounded-xl text-center" data-quality="high">
+                            <div class="text-xs font-bold text-blue-400">HIGH</div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">Shadows + Max DPR</div>
+                        </button>
+                        <button class="btn-perf-preset bg-slate-800 border border-slate-700 p-3 rounded-xl text-center" data-quality="medium">
+                            <div class="text-xs font-bold text-amber-400">MED</div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">Optimized DPR</div>
+                        </button>
+                        <button class="btn-perf-preset bg-slate-800 border border-slate-700 p-3 rounded-xl text-center" data-quality="low">
+                            <div class="text-xs font-bold text-emerald-400">LOW</div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">Max Performance</div>
+                        </button>
+                    </div>
+                </div>
+                <div class="space-y-4 pt-2 border-t border-slate-700/40">
+                    <div class="flex justify-between items-center">
+                        <label class="text-slate-300 font-medium">Real-Time Shadow Map</label>
+                        <input type="checkbox" id="input-shadows" checked class="w-5 h-5 rounded bg-slate-800 border-slate-600 text-blue-500 focus:ring-0">
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <label class="text-slate-300 font-medium">Adaptive Auto-FPS Downscale</label>
+                        <input type="checkbox" id="input-autofps" checked class="w-5 h-5 rounded bg-slate-800 border-slate-600 text-blue-500 focus:ring-0">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-slate-300 font-medium">Camera Field of View (FOV)</label>
+                            <span id="val-fov" class="text-slate-400 font-mono">45°</span>
+                        </div>
+                        <input type="range" id="input-fov" min="20" max="90" step="1" value="45" class="w-full">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="px-5 py-3 border-t border-slate-700/50 bg-slate-900/90 flex items-center justify-between text-[11px] text-slate-400 rounded-b-3xl">
+            <span class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>WebGPU/WebGL Engine</span>
+            </span>
+            <span id="fps-counter" class="text-emerald-400 font-mono font-bold">60 FPS</span>
+        </div>
+    </div>
+
+    <!-- Gesture Hint & Spinner & Toast -->
+    <div id="gesture-hint" class="absolute bottom-20 left-1/2 transform -translate-x-1/2 z-10 glass-panel px-4 py-2 rounded-full text-[11px] text-slate-300 pointer-events-none flex items-center space-x-3 shadow-xl transition-opacity duration-500 opacity-90">
+        <span><i class="fa-solid fa-hand-pointer text-blue-400 mr-1"></i> Rotate</span>
+        <span>&bull;</span>
+        <span><i class="fa-solid fa-hand-line text-blue-400 mr-1"></i> 2-Finger Pan</span>
+    </div>
+
+    <div id="loading-spinner" class="absolute inset-0 z-40 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center transition-opacity duration-300 opacity-0 pointer-events-none hidden">
+        <div class="w-14 h-14 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4"></div>
+        <h2 class="text-base font-semibold text-white tracking-wide">Loading 3D Model</h2>
+        <p id="loading-progress" class="text-xs text-slate-400 mt-1">Parsing Draco WASM geometry & PBR shaders...</p>
+    </div>
+
+    <div id="toast" class="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 glass-panel px-4 py-2.5 rounded-2xl text-xs text-white opacity-0 pointer-events-none transition-all duration-300 flex items-center space-x-2 shadow-2xl">
+        <i id="toast-icon" class="fa-solid fa-circle-info text-blue-400"></i>
+        <span id="toast-msg">Notification</span>
+    </div>
+
+    <!-- Modular Engine Entry Point -->
+    <script type="module" src="./js/engine.js"></script>
+</body>
+</html>
